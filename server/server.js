@@ -13,6 +13,7 @@ app.use(
   cors({
     origin: [
       'https://shop-order-manager-five.vercel.app',
+      'https://shop-order-manager-50fgmj8ep-asad-developer.vercel.app',
       'http://localhost:5173',
       'http://localhost:3000',
       'http://127.0.0.1:5173',

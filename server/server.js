@@ -10,7 +10,9 @@ const app = express();
 
 // Allowed frontend origins
 const allowedOrigins = [
+  'https://shop-order-manager-upw3.vercel.app',
   'https://shop-order-manager-five.vercel.app',
+  // 'https://shop-order-manager-five.vercel.app/login',
   'https://shop-order-manager-gguculmbr-asad-developer.vercel.app',
   'https://shop-order-manager-oooc818ev-asad-developer.vercel.app',
   'https://shop-order-manager-50fgmj8ep-asad-developer.vercel.app',

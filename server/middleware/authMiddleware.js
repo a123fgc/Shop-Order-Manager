@@ -39,6 +39,7 @@ const protect = async (req, res, next) => {
       });
     }
 
+
     next();
 
   } catch (error) {

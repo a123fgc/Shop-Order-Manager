@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import DataTable from '../components/DataTable';
 import {
@@ -13,6 +14,8 @@ import {
 } from 'lucide-react';
 
 export default function Products() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -119,13 +122,12 @@ export default function Products() {
       label: 'Stock',
       render: (val) => (
         <span
-          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-            val <= 0
-              ? 'bg-red-100 text-red-700'
-              : val <= 10
+          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${val <= 0
+            ? 'bg-red-100 text-red-700'
+            : val <= 10
               ? 'bg-yellow-100 text-yellow-700'
               : 'bg-green-100 text-green-700'
-          }`}
+            }`}
         >
           {val}
         </span>
@@ -141,18 +143,27 @@ export default function Products() {
       label: 'Actions',
       render: (_, row) => (
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => openEditModal(row)}
-            className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-          >
-            <Edit2 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => handleDelete(row._id)}
-            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          {isAdmin && (
+            <>
+              <button
+                onClick={() => openEditModal(row)}
+                className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+              >
+                <Edit2 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => handleDelete(row._id)}
+                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </>
+          )}
+          {!isAdmin && (
+            <span className="text-xs text-gray-400">
+              View Only
+            </span>
+          )}
         </div>
       ),
     },
@@ -172,10 +183,12 @@ export default function Products() {
             className="input-field pl-10"
           />
         </div>
-        <button onClick={openAddModal} className="btn-primary flex items-center gap-2">
-          <Plus className="w-4 h-4" />
-          Add Product
-        </button>
+        {isAdmin && (
+          <button onClick={openAddModal} className="btn-primary flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            Add Product
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -207,7 +220,7 @@ export default function Products() {
       )}
 
       {/* Modal */}
-      {showModal && (
+      {isAdmin && showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
             <div className="flex items-center justify-between mb-6">

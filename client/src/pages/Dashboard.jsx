@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { Users, Package, ShoppingCart, DollarSign, Loader2 } from 'lucide-react';
 import {
   BarChart,
@@ -14,6 +15,8 @@ import {
 } from 'recharts';
 
 export default function Dashboard() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -39,40 +42,56 @@ export default function Dashboard() {
     );
   }
 
-  const statCards = [
-    {
-      label: 'Total Customers',
-      value: stats?.totalCustomers ?? 0,
-      icon: Users,
-      color: 'bg-blue-500',
-      lightColor: 'bg-blue-50',
-      textColor: 'text-blue-600',
-    },
-    {
-      label: 'Total Products',
-      value: stats?.totalProducts ?? 0,
-      icon: Package,
-      color: 'bg-emerald-500',
-      lightColor: 'bg-emerald-50',
-      textColor: 'text-emerald-600',
-    },
-    {
-      label: 'Total Orders',
-      value: stats?.totalOrders ?? 0,
-      icon: ShoppingCart,
-      color: 'bg-purple-500',
-      lightColor: 'bg-purple-50',
-      textColor: 'text-purple-600',
-    },
-    {
-      label: 'Total Revenue',
-      value: `$${(stats?.totalRevenue ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      icon: DollarSign,
-      color: 'bg-amber-500',
-      lightColor: 'bg-amber-50',
-      textColor: 'text-amber-600',
-    },
-  ];
+  const statCards = isAdmin
+    ? [
+      {
+        label: 'Total Customers',
+        value: stats?.totalCustomers ?? 0,
+        icon: Users,
+        lightColor: 'bg-blue-50',
+        textColor: 'text-blue-600',
+      },
+      {
+        label: 'Total Products',
+        value: stats?.totalProducts ?? 0,
+        icon: Package,
+        lightColor: 'bg-emerald-50',
+        textColor: 'text-emerald-600',
+      },
+      {
+        label: 'Total Orders',
+        value: stats?.totalOrders ?? 0,
+        icon: ShoppingCart,
+        lightColor: 'bg-purple-50',
+        textColor: 'text-purple-600',
+      },
+      {
+        label: 'Total Revenue',
+        value: `$${(stats?.totalRevenue ?? 0).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`,
+        icon: DollarSign,
+        lightColor: 'bg-amber-50',
+        textColor: 'text-amber-600',
+      },
+    ]
+    : [
+      {
+        label: 'Total Products',
+        value: stats?.totalProducts ?? 0,
+        icon: Package,
+        lightColor: 'bg-emerald-50',
+        textColor: 'text-emerald-600',
+      },
+      {
+        label: 'My Total Orders',
+        value: stats?.totalOrders ?? 0,
+        icon: ShoppingCart,
+        lightColor: 'bg-purple-50',
+        textColor: 'text-purple-600',
+      },
+    ];
 
   const salesData = stats?.monthlySales || stats?.salesData || [];
   const recentOrders = stats?.recentOrders || [];
@@ -227,9 +246,8 @@ function StatusBadge({ status }) {
 
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${
-        styles[status] || 'bg-gray-100 text-gray-700'
-      }`}
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${styles[status] || 'bg-gray-100 text-gray-700'
+        }`}
     >
       {status}
     </span>

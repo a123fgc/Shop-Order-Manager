@@ -2,6 +2,12 @@ const mongoose = require('mongoose');
 
 // ── Customer Model ──────────────────────────────────────────────────────────
 const customerSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    unique: true,
+    sparse: true,
+  },
   name: {
     type: String,
     required: [true, 'Please add a customer name'],
@@ -29,7 +35,7 @@ const customerSchema = new mongoose.Schema({
   },
 });
 
-const Customer = mongoose.model('Customer', customerSchema);
+const Customer = mongoose.models.Customer || mongoose.model('Customer', customerSchema);
 
 // ── Controllers ─────────────────────────────────────────────────────────────
 

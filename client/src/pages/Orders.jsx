@@ -1,7 +1,10 @@
+
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import DataTable from '../components/DataTable';
+
 import {
   Search,
   Plus,
@@ -11,17 +14,20 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-
-const STATUS_OPTIONS = ['all', 'pending', 'processing', 'completed', 'cancelled'];
-
-const statusStyles = {
-  pending: 'bg-yellow-100 text-yellow-700',
-  processing: 'bg-blue-100 text-blue-700',
-  completed: 'bg-green-100 text-green-700',
-  cancelled: 'bg-red-100 text-red-700',
-};
-
 export default function Orders() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
+  const STATUS_OPTIONS = ['all', 'pending', 'processing', 'completed', 'cancelled'];
+
+  const statusStyles = {
+    pending: 'bg-yellow-100 text-yellow-700',
+    processing: 'bg-blue-100 text-blue-700',
+    completed: 'bg-green-100 text-green-700',
+    cancelled: 'bg-red-100 text-red-700',
+  };
+
+  // export default function Orders() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -108,9 +114,8 @@ export default function Orders() {
       label: 'Status',
       render: (val) => (
         <span
-          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${
-            statusStyles[val] || 'bg-gray-100 text-gray-700'
-          }`}
+          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${statusStyles[val] || 'bg-gray-100 text-gray-700'
+            }`}
         >
           {val}
         </span>
@@ -125,12 +130,14 @@ export default function Orders() {
       key: 'actions',
       label: 'Actions',
       render: (_, row) => (
-        <button
-          onClick={() => setSelectedOrder(row)}
-          className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-        >
-          <Eye className="w-4 h-4" />
-        </button>
+        <>
+          <button
+            onClick={() => setSelectedOrder(row)}
+            className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+          >
+            <Eye className="w-4 h-4" />
+          </button>
+        </>
       ),
     },
   ];
@@ -149,10 +156,12 @@ export default function Orders() {
             className="input-field pl-10"
           />
         </div>
+        {/* {isAdmin && ( */}
         <Link to="/orders/create" className="btn-primary flex items-center gap-2">
           <Plus className="w-4 h-4" />
           New Order
         </Link>
+
       </div>
 
       {/* Status Filter Tabs */}
@@ -161,11 +170,10 @@ export default function Orders() {
           <button
             key={status}
             onClick={() => handleStatusFilter(status)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium capitalize transition-colors duration-200 ${
-              statusFilter === status
-                ? 'bg-indigo-600 text-white'
-                : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-50'
-            }`}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium capitalize transition-colors duration-200 ${statusFilter === status
+              ? 'bg-indigo-600 text-white'
+              : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-50'
+              }`}
           >
             {status}
           </button>
@@ -226,20 +234,30 @@ export default function Orders() {
               {/* Status */}
               <div>
                 <label className="text-sm font-medium text-gray-500 block mb-1">Status</label>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={selectedOrder.status}
-                    onChange={(e) => handleStatusUpdate(selectedOrder._id, e.target.value)}
-                    disabled={updatingStatus}
-                    className="input-field w-auto"
+                {isAdmin ? (
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedOrder.status}
+                      onChange={(e) => handleStatusUpdate(selectedOrder._id, e.target.value)}
+                      disabled={updatingStatus}
+                      className="input-field w-auto"
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="processing">Processing</option>
+                      <option value="completed">Completed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                    {updatingStatus && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
+                  </div>
+                ) : (
+                  <span
+                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${
+                      statusStyles[selectedOrder.status] || 'bg-gray-100 text-gray-700'
+                    }`}
                   >
-                    <option value="pending">Pending</option>
-                    <option value="processing">Processing</option>
-                    <option value="completed">Completed</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-                  {updatingStatus && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
-                </div>
+                    {selectedOrder.status}
+                  </span>
+                )}
               </div>
 
               {/* Items */}

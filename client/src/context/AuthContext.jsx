@@ -58,7 +58,8 @@ export function AuthProvider({ children }) {
     const { data } = await api.post('/auth/login', { email, password });
     const t = data.token || data.data?.token;
     const u = data.user || data.data?.user || (data.data?.name ? data.data : data);
-
+    console.log('Logged-in user:', u);
+    console.log('User role:', u?.role);
     if (!t) {
       throw new Error('Authentication response did not contain a valid token');
     }

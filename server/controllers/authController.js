@@ -1,3 +1,5 @@
+// const Customer = require('../models/Customer');
+const { Customer } = require('./customerController');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -42,7 +44,7 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-const User = mongoose.model('User', userSchema);
+const User = mongoose.models.User || mongoose.model('User', userSchema);
 
 // ── Helper: generate JWT ────────────────────────────────────────────────────
 const generateToken = (id) => {
@@ -54,21 +56,43 @@ const generateToken = (id) => {
 // @desc    Register a new user
 // @route   POST /api/auth/register
 // @access  Public
+
 const register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password } = req.body;
 
     if (!name || !email || !password) {
-      return res.status(400).json({ success: false, message: 'Please provide name, email and password' });
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide name, email and password',
+      });
     }
 
     const userExists = await User.findOne({ email });
+
     if (userExists) {
-      return res.status(400).json({ success: false, message: 'User already exists' });
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists',
+      });
     }
 
-    const user = await User.create({ name, email, password, role });
+    const user = await User.create({
+      name,
+      email,
+      password,
+      role: 'user',
+    });
+
+    // Automatically create a customer profile for this user
+    const customer = await Customer.create({
+      user: user._id,
+      name: user.name,
+      email: user.email,
+    });
+
     const token = generateToken(user._id);
+
     const userData = {
       _id: user._id,
       name: user.name,
@@ -80,16 +104,27 @@ const register = async (req, res) => {
       success: true,
       token,
       user: userData,
+      customer: {
+        _id: customer._id,
+        name: customer.name,
+        email: customer.email,
+      },
       data: {
         ...userData,
         token,
       },
     });
+
   } catch (error) {
     console.error('Register error:', error.message);
-    res.status(500).json({ success: false, message: 'Server error' });
+
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
   }
 };
+
 
 // @desc    Login user & get token
 // @route   POST /api/auth/login

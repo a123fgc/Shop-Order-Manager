@@ -5,7 +5,7 @@ dotenv.config();
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const { connectDB } = require('./config/db');
+const { connectDB, getPool } = require('./config/db');
 
 const app = express();
 
@@ -14,6 +14,10 @@ const allowedOrigins = [
   'https://shop-order-manager-five.vercel.app',
   'https://shop-order-manager-50fgmj8ep-asad-developer.vercel.app',
   'https://shop-order-manager-2wazdc3ze-asad-developer.vercel.app',
+  'https://shop-order-manager-five.vercel.app',   // apna frontend
+  'https://shop-order-manager-upw3.vercel.app',   // apna backend
+  'http://localhost:5173',
+  'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',

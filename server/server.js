@@ -25,13 +25,35 @@ const allowedOrigins = [
 ];
 
 // CORS middleware - apply only once, before routes
+// app.use(
+//   cors({
+//     origin: (origin, callback) => {
+//       if (!origin || allowedOrigins.includes(origin)) {
+//         return callback(null, true);
+//       }
+
+//       return callback(new Error(`CORS blocked origin: ${origin}`));
+//     },
+//     credentials: true,
+//     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+//     allowedHeaders: ['Content-Type', 'Authorization'],
+//   })
+// );
+
+// app.use(express.json());
+// app.use(express.urlencoded({ extended: false }));
+// app.use(cookieParser());
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow localhost + koi bhi Vercel URL (preview ya production)
+      if (
+        !origin ||
+        /\.vercel\.app$/.test(origin) ||
+        origin.startsWith('http://localhost')
+      ) {
         return callback(null, true);
       }
-
       return callback(new Error(`CORS blocked origin: ${origin}`));
     },
     credentials: true,
@@ -39,10 +61,6 @@ app.use(
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
-app.use(cookieParser());
 
 // Connect PostgreSQL and ensure the schema exists.
 const dbReady = connectDB();

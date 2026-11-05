@@ -1,11 +1,11 @@
+const dotenv = require('dotenv');
+
+dotenv.config();
 
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const dotenv = require('dotenv');
-const connectDB = require('./config/db');
-
-dotenv.config();
+const { connectDB } = require('./config/db');
 
 const app = express();
 
@@ -40,8 +40,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-// Connect MongoDB
-connectDB();
+// Connect PostgreSQL and ensure the schema exists.
+const dbReady = connectDB();
+
+// For serverless environments the exported app is used, so attach a handler to
+// avoid an unhandled rejection. Local startup below waits for the connection.
+dbReady.catch((error) => {
+  console.error('Database initialization error:', error.message);
+});
 
 // API routes
 app.use('/api/auth', require('./routes/authRoutes'));
@@ -70,11 +76,18 @@ app.use((err, req, res, next) => {
 
 // Local development
 if (require.main === module) {
-  const PORT = process.env.PORT || 5000;
+  dbReady
+    .then(() => {
+      const PORT = process.env.PORT || 5000;
 
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+      app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+      });
+    })
+    .catch((error) => {
+      console.error('Unable to start server:', error.message);
+      process.exit(1);
+    });
 }
 
 // Vercel export

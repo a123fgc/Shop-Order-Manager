@@ -1,54 +1,28 @@
-// const Customer = require('../models/Customer');
-const { Customer } = require('./customerController');
-const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { query, withTransaction } = require('../config/db');
+const { mapUser, mapCustomer } = require('../utils/mappers');
+const { normalizeEmail } = require('../utils/validators');
 
-// ── User Model ──────────────────────────────────────────────────────────────
-const userSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Please add a name'],
-    trim: true,
-  },
-  email: {
-    type: String,
-    required: [true, 'Please add an email'],
-    unique: true,
-    trim: true,
-    lowercase: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please use a valid email address'],
-  },
-  password: {
-    type: String,
-    required: [true, 'Please add a password'],
-    minlength: 6,
-  },
-  role: {
-    type: String,
-    enum: ['admin', 'user'],
-    default: 'user',
-  },
-}, { timestamps: true });
-
-// Hash password before save
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
-});
-
-// Compare entered password with hashed
-userSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
-};
-
-const User = mongoose.models.User || mongoose.model('User', userSchema);
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 // ── Helper: generate JWT ────────────────────────────────────────────────────
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+};
+
+const userResponse = (user, token) => {
+  const userData = mapUser(user);
+
+  return {
+    success: true,
+    token,
+    user: userData,
+    data: {
+      ...userData,
+      token,
+    },
+  };
 };
 
 // ── Controllers ─────────────────────────────────────────────────────────────
@@ -56,10 +30,12 @@ const generateToken = (id) => {
 // @desc    Register a new user
 // @route   POST /api/auth/register
 // @access  Public
-
 const register = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const name =
+      typeof req.body.name === 'string' ? req.body.name.trim() : '';
+    const email = normalizeEmail(req.body.email);
+    const { password } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({
@@ -68,55 +44,70 @@ const register = async (req, res) => {
       });
     }
 
-    const userExists = await User.findOne({ email });
+    if (!EMAIL_RE.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please use a valid email address',
+      });
+    }
 
-    if (userExists) {
+    if (String(password).length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long',
+      });
+    }
+
+    const existing = await query('SELECT id FROM users WHERE email = $1', [
+      email,
+    ]);
+
+    if (existing.rowCount > 0) {
       return res.status(400).json({
         success: false,
         message: 'User already exists',
       });
     }
 
-    const user = await User.create({
-      name,
-      email,
-      password,
-      role: 'user',
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+
+    const { user, customer } = await withTransaction(async (client) => {
+      const userResult = await client.query(
+        `INSERT INTO users (name, email, password, role)
+         VALUES ($1, $2, $3, 'user')
+         RETURNING *`,
+        [name, email, hashedPassword]
+      );
+
+      const createdUser = userResult.rows[0];
+
+      // Automatically create a customer profile for this user
+      const customerResult = await client.query(
+        `INSERT INTO customers (user_id, name, email)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [createdUser.id, createdUser.name, createdUser.email]
+      );
+
+      return { user: createdUser, customer: customerResult.rows[0] };
     });
 
-    // Automatically create a customer profile for this user
-    const customer = await Customer.create({
-      user: user._id,
-      name: user.name,
-      email: user.email,
-    });
-
-    const token = generateToken(user._id);
-
-    const userData = {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    };
+    const token = generateToken(user.id);
+    const response = userResponse(user, token);
 
     res.status(201).json({
-      success: true,
-      token,
-      user: userData,
-      customer: {
-        _id: customer._id,
-        name: customer.name,
-        email: customer.email,
-      },
-      data: {
-        ...userData,
-        token,
-      },
+      ...response,
+      customer: mapCustomer(customer),
     });
-
   } catch (error) {
     console.error('Register error:', error.message);
+
+    if (error.code === '23505') {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists',
+      });
+    }
 
     res.status(500).json({
       success: false,
@@ -125,41 +116,36 @@ const register = async (req, res) => {
   }
 };
 
-
 // @desc    Login user & get token
 // @route   POST /api/auth/login
 // @access  Public
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const { password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Please provide email and password' });
-    }
-
-    const user = await User.findOne({ email });
-
-    if (user && (await user.matchPassword(password))) {
-      const token = generateToken(user._id);
-      const userData = {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      };
-
-      res.json({
-        success: true,
-        token,
-        user: userData,
-        data: {
-          ...userData,
-          token,
-        },
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email and password',
       });
-    } else {
-      res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
+
+    const { rows } = await query('SELECT * FROM users WHERE email = $1', [
+      email,
+    ]);
+
+    const user = rows[0];
+
+    if (user && (await bcrypt.compare(String(password), user.password))) {
+      const token = generateToken(user.id);
+      return res.json(userResponse(user, token));
+    }
+
+    res.status(401).json({
+      success: false,
+      message: 'Invalid email or password',
+    });
   } catch (error) {
     console.error('Login error:', error.message);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -171,7 +157,8 @@ const login = async (req, res) => {
 // @access  Private
 const getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password');
+    const user = mapUser(req.user);
+
     res.json({ success: true, user, data: user });
   } catch (error) {
     console.error('GetMe error:', error.message);
@@ -179,4 +166,4 @@ const getMe = async (req, res) => {
   }
 };
 
-module.exports = { register, login, getMe, User };
+module.exports = { register, login, getMe };

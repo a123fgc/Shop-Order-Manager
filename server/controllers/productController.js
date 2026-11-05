@@ -1,74 +1,59 @@
-const mongoose = require('mongoose');
-
-// ── Product Model ───────────────────────────────────────────────────────────
-const productSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Please add a product name'],
-    trim: true,
-  },
-  description: {
-    type: String,
-    trim: true,
-    default: '',
-  },
-  price: {
-    type: Number,
-    required: [true, 'Please add a price'],
-    min: [0, 'Price cannot be negative'],
-  },
-  stock: {
-    type: Number,
-    required: [true, 'Please add stock quantity'],
-    min: [0, 'Stock cannot be negative'],
-    default: 0,
-  },
-  category: {
-    type: String,
-    trim: true,
-    default: 'General',
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-});
-
-const Product = mongoose.models.Product || mongoose.model('Product', productSchema);
-
-// ── Controllers ─────────────────────────────────────────────────────────────
+const { query } = require('../config/db');
+const { mapProduct } = require('../utils/mappers');
+const { HttpError, isUuid } = require('../utils/validators');
 
 // @desc    Get all products (with search & pagination)
 // @route   GET /api/products
 // @access  Private
 const getProducts = async (req, res) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10;
-    const skip = (page - 1) * limit;
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(
+      1000,
+      Math.max(1, Number.parseInt(req.query.limit, 10) || 10)
+    );
+    const offset = (page - 1) * limit;
+    const search = String(req.query.search || '').trim();
+    const category = String(req.query.category || '').trim();
 
-    const filter = {};
-    if (req.query.search) {
-      const regex = new RegExp(req.query.search, 'i');
-      filter.$or = [
-        { name: regex },
-        { description: regex },
-        { category: regex },
-      ];
-    }
-    if (req.query.category) {
-      filter.category = new RegExp(req.query.category, 'i');
+    const conditions = [];
+    const params = [];
+
+    if (search) {
+      params.push(`%${search}%`);
+      conditions.push(
+        `(name ILIKE $${params.length} OR description ILIKE $${params.length} OR category ILIKE $${params.length})`
+      );
     }
 
-    const total = await Product.countDocuments(filter);
-    const products = await Product.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    if (category) {
+      params.push(`%${category}%`);
+      conditions.push(`category ILIKE $${params.length}`);
+    }
+
+    const where = conditions.length
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
+    const countResult = await query(
+      `SELECT COUNT(*)::int AS total FROM products ${where}`,
+      params
+    );
+
+    const dataParams = [...params, limit, offset];
+    const result = await query(
+      `SELECT * FROM products
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      dataParams
+    );
+
+    const total = countResult.rows[0].total;
 
     res.json({
       success: true,
-      data: products,
+      data: result.rows.map(mapProduct),
       pagination: {
         total,
         page,
@@ -86,11 +71,23 @@ const getProducts = async (req, res) => {
 // @access  Private
 const getProduct = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+    const { id } = req.params;
+
+    if (!isUuid(id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Invalid product ID' });
     }
-    res.json({ success: true, data: product });
+
+    const { rows } = await query('SELECT * FROM products WHERE id = $1', [id]);
+
+    if (!rows[0]) {
+      return res
+        .status(404)
+        .json({ success: false, message: 'Product not found' });
+    }
+
+    res.json({ success: true, data: mapProduct(rows[0]) });
   } catch (error) {
     console.error('getProduct error:', error.message);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -102,15 +99,48 @@ const getProduct = async (req, res) => {
 // @access  Private
 const createProduct = async (req, res) => {
   try {
-    const { name, description, price, stock, category } = req.body;
+    const name =
+      typeof req.body.name === 'string' ? req.body.name.trim() : '';
 
-    if (!name || price === undefined) {
-      return res.status(400).json({ success: false, message: 'Please provide name and price' });
+    if (!name || req.body.price === undefined || req.body.price === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide name and price',
+      });
     }
 
-    const product = await Product.create({ name, description, price, stock, category });
-    res.status(201).json({ success: true, data: product });
+    const price = Number(req.body.price);
+    const stock =
+      req.body.stock === undefined || req.body.stock === null
+        ? 0
+        : Number.parseInt(req.body.stock, 10);
+
+    if (!Number.isFinite(price) || price < 0) {
+      throw new HttpError(400, 'Price must be a non-negative number');
+    }
+
+    if (!Number.isInteger(stock) || stock < 0) {
+      throw new HttpError(400, 'Stock must be a non-negative integer');
+    }
+
+    const description = String(req.body.description || '').trim();
+    const category = String(req.body.category || 'General').trim() || 'General';
+
+    const { rows } = await query(
+      `INSERT INTO products (name, description, price, stock, category)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [name, description, price, stock, category]
+    );
+
+    res.status(201).json({ success: true, data: mapProduct(rows[0]) });
   } catch (error) {
+    if (error instanceof HttpError) {
+      return res
+        .status(error.statusCode)
+        .json({ success: false, message: error.message });
+    }
+
     console.error('createProduct error:', error.message);
     res.status(500).json({ success: false, message: 'Server error' });
   }
@@ -121,17 +151,97 @@ const createProduct = async (req, res) => {
 // @access  Private
 const updateProduct = async (req, res) => {
   try {
-    const product = await Product.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    const { id } = req.params;
 
-    if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+    if (!isUuid(id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Invalid product ID' });
     }
 
-    res.json({ success: true, data: product });
+    const fieldMap = {
+      name: 'name',
+      description: 'description',
+      price: 'price',
+      stock: 'stock',
+      category: 'category',
+    };
+
+    const updates = [];
+    const params = [];
+
+    for (const [bodyKey, column] of Object.entries(fieldMap)) {
+      if (!(bodyKey in req.body)) continue;
+
+      let value = req.body[bodyKey];
+
+      if (column === 'price') {
+        value = Number(value);
+
+        if (!Number.isFinite(value) || value < 0) {
+          throw new HttpError(400, 'Price must be a non-negative number');
+        }
+      } else if (column === 'stock') {
+        value = Number.parseInt(value, 10);
+
+        if (!Number.isInteger(value) || value < 0) {
+          throw new HttpError(400, 'Stock must be a non-negative integer');
+        }
+      } else if (column === 'name') {
+        value = String(value || '').trim();
+
+        if (!value) {
+          throw new HttpError(400, 'Product name is required');
+        }
+      } else {
+        value = String(value || '').trim();
+      }
+
+      params.push(value);
+      updates.push(`${column} = $${params.length}`);
+    }
+
+    if (updates.length === 0) {
+      const existing = await query('SELECT * FROM products WHERE id = $1', [
+        id,
+      ]);
+
+      if (!existing.rows[0]) {
+        return res
+          .status(404)
+          .json({ success: false, message: 'Product not found' });
+      }
+
+      return res.json({
+        success: true,
+        data: mapProduct(existing.rows[0]),
+      });
+    }
+
+    params.push(id);
+
+    const { rows } = await query(
+      `UPDATE products
+       SET ${updates.join(', ')}
+       WHERE id = $${params.length}
+       RETURNING *`,
+      params
+    );
+
+    if (!rows[0]) {
+      return res
+        .status(404)
+        .json({ success: false, message: 'Product not found' });
+    }
+
+    res.json({ success: true, data: mapProduct(rows[0]) });
   } catch (error) {
+    if (error instanceof HttpError) {
+      return res
+        .status(error.statusCode)
+        .json({ success: false, message: error.message });
+    }
+
     console.error('updateProduct error:', error.message);
     res.status(500).json({ success: false, message: 'Server error' });
   }
@@ -142,10 +252,23 @@ const updateProduct = async (req, res) => {
 // @access  Private
 const deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findByIdAndDelete(req.params.id);
+    const { id } = req.params;
 
-    if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+    if (!isUuid(id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Invalid product ID' });
+    }
+
+    const { rowCount } = await query(
+      'DELETE FROM products WHERE id = $1',
+      [id]
+    );
+
+    if (rowCount === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: 'Product not found' });
     }
 
     res.json({ success: true, message: 'Product removed' });
@@ -155,4 +278,10 @@ const deleteProduct = async (req, res) => {
   }
 };
 
-module.exports = { getProducts, getProduct, createProduct, updateProduct, deleteProduct, Product };
+module.exports = {
+  getProducts,
+  getProduct,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+};

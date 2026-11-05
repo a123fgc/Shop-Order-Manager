@@ -1,140 +1,142 @@
+const { query, withTransaction } = require('../config/db');
+const { mapOrder } = require('../utils/mappers');
+const { ORDER_SELECT } = require('../utils/orderQueries');
+const {
+  HttpError,
+  isUuid,
+  roundMoney,
+} = require('../utils/validators');
 
-const mongoose = require('mongoose');
+const VALID_STATUSES = ['pending', 'processing', 'completed', 'cancelled'];
 
-// ==========================================
-// 1. ORDER SCHEMA
-// ==========================================
+async function fetchOrderById(id) {
+  const { rows } = await query(`${ORDER_SELECT} WHERE o.id = $1`, [id]);
+  return mapOrder(rows[0]);
+}
 
-const orderSchema = new mongoose.Schema(
-  {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
-
-    customer: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Customer',
-      required: true,
-    },
-
-    items: [
-      {
-        product: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'Product',
-          required: true,
-        },
-
-        quantity: {
-          type: Number,
-          required: true,
-          min: 1,
-        },
-
-        price: {
-          type: Number,
-          required: true,
-          min: 0,
-        },
-      },
-    ],
-
-    totalAmount: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    status: {
-      type: String,
-      enum: ['pending', 'processing', 'completed', 'cancelled'],
-      default: 'pending',
-    },
-
-    notes: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-  },
-  {
-    timestamps: true,
-  }
-);
-
-// Prevent model recompilation errors
-const Order =
-  mongoose.models.Order || mongoose.model('Order', orderSchema);
-
-
-// ==========================================
-// 2. MODEL HELPERS
-// ==========================================
-
-const getProductModel = () => {
-  return mongoose.model('Product');
-};
-
-const getCustomerModel = () => {
-  return mongoose.models.Customer ||
-    require('./customerController').Customer;
-};
-
-
-// ==========================================
-// 3. GET ALL ORDERS
-// ==========================================
-
-const getOrders = async (req, res) => {
-  try {
-    const filter = {};
-
-    const isAdmin = req.user.role === 'admin';
-
-    // Normal users can only see their own orders
-    if (!isAdmin) {
-      filter.user = req.user._id;
-    }
-
-    // Admin can filter by customer
-    if (isAdmin && req.query.customer) {
-      if (!mongoose.Types.ObjectId.isValid(req.query.customer)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid customer ID',
-        });
+async function resolveCustomer(client, req, isAdmin) {
+  if (isAdmin) {
+    if (req.body.customer) {
+      if (!isUuid(req.body.customer)) {
+        throw new HttpError(400, 'Invalid customer ID');
       }
 
-      filter.customer = req.query.customer;
+      const result = await client.query(
+        'SELECT * FROM customers WHERE id = $1',
+        [req.body.customer]
+      );
+
+      return result.rows[0] || null;
     }
 
-    // Optional status filter
-    if (req.query.status) {
-      filter.status = req.query.status;
-    }
-
-    // Pagination
-    const page = Math.max(1, Number(req.query.page) || 1);
-    const limit = Math.min(
-      100,
-      Math.max(1, Number(req.query.limit) || 10)
+    const result = await client.query(
+      `SELECT *
+       FROM customers
+       WHERE user_id = $1 OR (email <> '' AND email = $2)
+       ORDER BY (user_id = $1) DESC, created_at ASC
+       LIMIT 1`,
+      [req.user._id, req.user.email || '']
     );
 
-    const skip = (page - 1) * limit;
+    return result.rows[0] || null;
+  }
 
-    const [orders, total] = await Promise.all([
-      Order.find(filter)
-        .populate('customer', 'name email phone')
-        .populate('user', 'name email')
-        .populate('items.product', 'name price category')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
+  let result = await client.query(
+    'SELECT * FROM customers WHERE user_id = $1 LIMIT 1',
+    [req.user._id]
+  );
+  let customer = result.rows[0];
 
-      Order.countDocuments(filter),
+  // If the customer profile is not linked, find it by the user's email.
+  if (!customer && req.user.email) {
+    result = await client.query(
+      'SELECT * FROM customers WHERE email = $1 ORDER BY created_at ASC LIMIT 1',
+      [req.user.email]
+    );
+    customer = result.rows[0];
+
+    if (customer && !customer.user_id) {
+      await client.query('UPDATE customers SET user_id = $1 WHERE id = $2', [
+        req.user._id,
+        customer.id,
+      ]);
+      customer.user_id = req.user._id;
+    }
+  }
+
+  // If no profile exists at all, create one for the logged-in user.
+  if (!customer) {
+    result = await client.query(
+      `INSERT INTO customers (user_id, name, email, phone, address)
+       VALUES ($1, $2, $3, '', '')
+       RETURNING *`,
+      [req.user._id, req.user.name || 'Customer', req.user.email || '']
+    );
+    customer = result.rows[0];
+  }
+
+  return customer;
+}
+
+// ==========================================
+// 1. GET ALL ORDERS
+// ==========================================
+const getOrders = async (req, res) => {
+  try {
+    const isAdmin = req.user.role === 'admin';
+
+    if (isAdmin && req.query.customer && !isUuid(req.query.customer)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid customer ID',
+      });
+    }
+
+    const conditions = [];
+    const params = [];
+
+    // Normal users can only see their own orders.
+    if (!isAdmin) {
+      params.push(req.user._id);
+      conditions.push(`o.user_id = $${params.length}`);
+    }
+
+    // Admin can filter by customer.
+    if (isAdmin && req.query.customer) {
+      params.push(req.query.customer);
+      conditions.push(`o.customer_id = $${params.length}`);
+    }
+
+    // Optional status filter.
+    if (req.query.status) {
+      params.push(req.query.status);
+      conditions.push(`o.status = $${params.length}`);
+    }
+
+    const where = conditions.length
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 10));
+    const offset = (page - 1) * limit;
+
+    const [countResult, ordersResult] = await Promise.all([
+      query(
+        `SELECT COUNT(*)::int AS total FROM orders o ${where}`,
+        params
+      ),
+      query(
+        `${ORDER_SELECT}
+         ${where}
+         ORDER BY o.created_at DESC, o.id DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
+      ),
     ]);
+
+    const total = countResult.rows[0].total;
+    const orders = ordersResult.rows.map(mapOrder);
 
     return res.status(200).json({
       success: true,
@@ -144,7 +146,6 @@ const getOrders = async (req, res) => {
       pages: Math.ceil(total / limit),
       data: orders,
     });
-
   } catch (error) {
     console.error('getOrders error:', error);
 
@@ -155,38 +156,34 @@ const getOrders = async (req, res) => {
   }
 };
 
-
 // ==========================================
-// 4. GET SINGLE ORDER
+// 2. GET SINGLE ORDER
 // ==========================================
-
 const getOrder = async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (!isUuid(id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid order ID',
       });
     }
 
-    const order = await Order.findById(id)
-      .populate('customer', 'name email phone')
-      .populate('user', 'name email')
-      .populate('items.product', 'name price category');
+    const { rows } = await query(`${ORDER_SELECT} WHERE o.id = $1`, [id]);
+    const orderRow = rows[0];
 
-    if (!order) {
+    if (!orderRow) {
       return res.status(404).json({
         success: false,
         message: 'Order not found',
       });
     }
 
-    // Normal users can only access their own orders
+    // Normal users can only access their own orders.
     if (
       req.user.role !== 'admin' &&
-      order.user._id.toString() !== req.user._id.toString()
+      orderRow.user_id !== req.user._id
     ) {
       return res.status(403).json({
         success: false,
@@ -196,9 +193,8 @@ const getOrder = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      data: order,
+      data: mapOrder(orderRow),
     });
-
   } catch (error) {
     console.error('getOrder error:', error);
 
@@ -209,24 +205,14 @@ const getOrder = async (req, res) => {
   }
 };
 
-
 // ==========================================
-// 5. CREATE ORDER
+// 3. CREATE ORDER
 // ==========================================
-
 const createOrder = async (req, res) => {
-  const updatedStock = [];
-  let orderCreated = false;
-
   try {
     const { items } = req.body;
-
     const isAdmin = req.user.role === 'admin';
 
-    const Product = getProductModel();
-    const Customer = getCustomerModel();
-
-    // Validate items
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({
         success: false,
@@ -234,86 +220,15 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // --------------------------------------
-    // Find customer profile
-    // --------------------------------------
-
-    let customer;
-
-    if (isAdmin) {
-      // Admin selects a customer
-      if (req.body.customer) {
-        if (!mongoose.Types.ObjectId.isValid(req.body.customer)) {
-          return res.status(400).json({
-            success: false,
-            message: 'Invalid customer ID',
-          });
-        }
-
-        customer = await Customer.findById(req.body.customer);
-      } else {
-        // If admin did not select a customer, check if admin has their own profile
-        customer = await Customer.findOne({ user: req.user._id });
-        if (!customer && req.user.email) {
-          customer = await Customer.findOne({ email: req.user.email });
-        }
-        if (!customer) {
-          return res.status(400).json({
-            success: false,
-            message: 'Please select a customer for this order',
-          });
-        }
-      }
-    } else {
-      // Normal user gets their own customer profile
-      customer = await Customer.findOne({
-        user: req.user._id,
-      });
-
-      // If customer is not linked, find by logged-in user's email
-      if (!customer && req.user.email) {
-        customer = await Customer.findOne({
-          email: req.user.email,
-        });
-
-        // Automatically link existing customer with user
-        if (customer && !customer.user) {
-          customer.user = req.user._id;
-          await customer.save();
-        }
-      }
-
-      // If customer still does not exist, automatically create profile for logged-in user
-      if (!customer) {
-        customer = await Customer.create({
-          user: req.user._id,
-          name: req.user.name || 'Customer',
-          email: req.user.email || '',
-          phone: '',
-          address: '',
-        });
-      }
-    }
-
-    if (!customer) {
-      return res.status(404).json({
-        success: false,
-        message: 'Customer not found',
-      });
-    }
-
-    // --------------------------------------
-    // Validate products and quantities
-    // --------------------------------------
-
-    const productQuantities = {};
+    // Validate and combine duplicate products.
+    const productQuantities = new Map();
 
     for (const item of items) {
       const quantity = Number(item.quantity);
 
       if (
         !item.product ||
-        !mongoose.Types.ObjectId.isValid(item.product) ||
+        !isUuid(item.product) ||
         !Number.isInteger(quantity) ||
         quantity < 1
       ) {
@@ -323,144 +238,128 @@ const createOrder = async (req, res) => {
         });
       }
 
-      const productId = item.product.toString();
-
-      // Combine duplicate products
-      productQuantities[productId] =
-        (productQuantities[productId] || 0) + quantity;
-    }
-
-    // --------------------------------------
-    // Check products and calculate total
-    // --------------------------------------
-
-    const orderItems = [];
-    let totalAmount = 0;
-
-    for (const [productId, quantity] of Object.entries(productQuantities)) {
-      const product = await Product.findById(productId);
-
-      if (!product) {
-        return res.status(404).json({
-          success: false,
-          message: `Product not found: ${productId}`,
-        });
-      }
-
-      if (
-        typeof product.stock !== 'number' ||
-        product.stock < quantity
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for ${product.name}`,
-        });
-      }
-
-      if (
-        typeof product.price !== 'number' ||
-        product.price < 0
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid price for ${product.name}`,
-        });
-      }
-
-      orderItems.push({
-        product: product._id,
-        quantity,
-        price: product.price,
-      });
-
-      totalAmount += product.price * quantity;
-    }
-
-    // --------------------------------------
-    // Reduce stock safely
-    // --------------------------------------
-
-    for (const item of orderItems) {
-      const result = await Product.updateOne(
-        {
-          _id: item.product,
-          stock: { $gte: item.quantity },
-        },
-        {
-          $inc: {
-            stock: -item.quantity,
-          },
-        }
+      productQuantities.set(
+        item.product,
+        (productQuantities.get(item.product) || 0) + quantity
       );
+    }
 
-      if (result.modifiedCount !== 1) {
-        throw new Error(
-          'Stock changed while creating order. Please try again.'
+    const status = isAdmin ? req.body.status || 'pending' : 'pending';
+    const notes = isAdmin ? req.body.notes || '' : '';
+
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid order status',
+      });
+    }
+
+    const orderId = await withTransaction(async (client) => {
+      const customer = await resolveCustomer(client, req, isAdmin);
+
+      if (!customer) {
+        throw new HttpError(
+          400,
+          isAdmin
+            ? 'Please select a customer for this order'
+            : 'Customer not found'
         );
       }
 
-      updatedStock.push(item);
-    }
+      const orderItems = [];
+      let totalAmount = 0;
 
-    // --------------------------------------
-    // Create order
-    // --------------------------------------
+      for (const [productId, quantity] of productQuantities.entries()) {
+        // Lock the row while we validate and reduce stock.
+        const productResult = await client.query(
+          'SELECT * FROM products WHERE id = $1 FOR UPDATE',
+          [productId]
+        );
+        const product = productResult.rows[0];
 
-    const order = await Order.create({
-      user: req.user._id,
-      customer: customer._id,
-      items: orderItems,
-      totalAmount,
+        if (!product) {
+          throw new HttpError(404, `Product not found: ${productId}`);
+        }
 
-      // Only admin can set status and notes
-      status: isAdmin
-        ? (req.body.status || 'pending')
-        : 'pending',
+        if (product.stock < quantity) {
+          throw new HttpError(
+            400,
+            `Insufficient stock for ${product.name}`
+          );
+        }
 
-      notes: isAdmin
-        ? (req.body.notes || '')
-        : '',
+        const price = Number(product.price);
+
+        if (!Number.isFinite(price) || price < 0) {
+          throw new HttpError(400, `Invalid price for ${product.name}`);
+        }
+
+        const stockResult = await client.query(
+          `UPDATE products
+           SET stock = stock - $1
+           WHERE id = $2 AND stock >= $1
+           RETURNING id`,
+          [quantity, productId]
+        );
+
+        if (stockResult.rowCount !== 1) {
+          throw new HttpError(
+            409,
+            'Stock changed while creating order. Please try again.'
+          );
+        }
+
+        orderItems.push({
+          productId,
+          quantity,
+          price,
+        });
+
+        totalAmount += price * quantity;
+      }
+
+      const orderResult = await client.query(
+        `INSERT INTO orders (user_id, customer_id, total_amount, status, notes)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id`,
+        [
+          req.user._id,
+          customer.id,
+          roundMoney(totalAmount),
+          status,
+          notes,
+        ]
+      );
+
+      const createdOrderId = orderResult.rows[0].id;
+
+      for (const item of orderItems) {
+        await client.query(
+          `INSERT INTO order_items (order_id, product_id, quantity, price)
+           VALUES ($1, $2, $3, $4)`,
+          [createdOrderId, item.productId, item.quantity, item.price]
+        );
+      }
+
+      return createdOrderId;
     });
 
-    orderCreated = true;
-
-    // --------------------------------------
-    // Return populated order
-    // --------------------------------------
-
-    const populatedOrder = await Order.findById(order._id)
-      .populate('customer', 'name email phone')
-      .populate('user', 'name email')
-      .populate('items.product', 'name price category');
+    const populatedOrder = await fetchOrderById(orderId);
 
     return res.status(201).json({
       success: true,
       message: 'Order created successfully',
       data: populatedOrder,
     });
-
   } catch (error) {
-    console.error('createOrder error:', error);
-
-    // Restore stock only if order was not saved
-    if (!orderCreated) {
-      const Product = getProductModel();
-
-      for (const item of updatedStock) {
-        try {
-          await Product.updateOne(
-            { _id: item.product },
-            {
-              $inc: {
-                stock: item.quantity,
-              },
-            }
-          );
-        } catch (rollbackError) {
-          console.error('Stock rollback error:', rollbackError);
-        }
-      }
+    if (error instanceof HttpError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
     }
+
+    console.error('createOrder error:', error);
 
     return res.status(500).json({
       success: false,
@@ -469,14 +368,12 @@ const createOrder = async (req, res) => {
   }
 };
 
-
 // ==========================================
-// 6. UPDATE ORDER
+// 4. UPDATE ORDER
 // ==========================================
-
 const updateOrder = async (req, res) => {
   try {
-    // Only admin can update orders
+    // Only admin can update orders.
     if (req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
@@ -487,130 +384,110 @@ const updateOrder = async (req, res) => {
     const { id } = req.params;
     const { status, notes } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (!isUuid(id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid order ID',
       });
     }
 
-    const order = await Order.findById(id);
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found',
-      });
-    }
-
-    const validStatuses = [
-      'pending',
-      'processing',
-      'completed',
-      'cancelled',
-    ];
-
-    if (
-      status !== undefined &&
-      !validStatuses.includes(status)
-    ) {
+    if (status !== undefined && !VALID_STATUSES.includes(status)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid order status',
       });
     }
 
-    const Product = getProductModel();
+    await withTransaction(async (client) => {
+      const orderResult = await client.query(
+        'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+      const order = orderResult.rows[0];
 
-    // Restore stock when order is cancelled
-    if (
-      status === 'cancelled' &&
-      order.status !== 'cancelled'
-    ) {
-      for (const item of order.items) {
-        await Product.updateOne(
-          { _id: item.product },
-          {
-            $inc: {
-              stock: item.quantity,
-            },
+      if (!order) {
+        throw new HttpError(404, 'Order not found');
+      }
+
+      if (status !== undefined && status !== order.status) {
+        // Restore stock when an order is cancelled.
+        if (status === 'cancelled' && order.status !== 'cancelled') {
+          await client.query(
+            `UPDATE products p
+             SET stock = p.stock + oi.quantity
+             FROM order_items oi
+             WHERE oi.order_id = $1 AND p.id = oi.product_id`,
+            [id]
+          );
+        }
+
+        // Deduct stock again if a cancelled order is reopened.
+        if (status !== 'cancelled' && order.status === 'cancelled') {
+          const itemsResult = await client.query(
+            'SELECT * FROM order_items WHERE order_id = $1',
+            [id]
+          );
+
+          for (const item of itemsResult.rows) {
+            if (!item.product_id) continue;
+
+            const stockResult = await client.query(
+              `UPDATE products
+               SET stock = stock - $1
+               WHERE id = $2 AND stock >= $1
+               RETURNING id`,
+              [item.quantity, item.product_id]
+            );
+
+            if (stockResult.rowCount !== 1) {
+              throw new HttpError(
+                400,
+                'Insufficient stock to reopen this order'
+              );
+            }
           }
+        }
+      }
+
+      const updates = [];
+      const params = [];
+
+      if (status !== undefined) {
+        params.push(status);
+        updates.push(`status = $${params.length}`);
+      }
+
+      if (notes !== undefined) {
+        params.push(notes);
+        updates.push(`notes = $${params.length}`);
+      }
+
+      if (updates.length > 0) {
+        params.push(id);
+        await client.query(
+          `UPDATE orders
+           SET ${updates.join(', ')}, updated_at = NOW()
+           WHERE id = $${params.length}`,
+          params
         );
       }
-    }
+    });
 
-    // Deduct stock again if cancelled order is reopened
-    if (
-      status &&
-      status !== 'cancelled' &&
-      order.status === 'cancelled'
-    ) {
-      const deductedItems = [];
-
-      try {
-        for (const item of order.items) {
-          const result = await Product.updateOne(
-            {
-              _id: item.product,
-              stock: { $gte: item.quantity },
-            },
-            {
-              $inc: {
-                stock: -item.quantity,
-              },
-            }
-          );
-
-          if (result.modifiedCount !== 1) {
-            throw new Error(
-              'Insufficient stock to reopen this order'
-            );
-          }
-
-          deductedItems.push(item);
-        }
-      } catch (error) {
-        // Restore any stock already deducted in this operation
-        for (const item of deductedItems) {
-          await Product.updateOne(
-            { _id: item.product },
-            {
-              $inc: {
-                stock: item.quantity,
-              },
-            }
-          );
-        }
-
-        return res.status(400).json({
-          success: false,
-          message: error.message,
-        });
-      }
-    }
-
-    if (status !== undefined) {
-      order.status = status;
-    }
-
-    if (notes !== undefined) {
-      order.notes = notes;
-    }
-
-    await order.save();
-
-    const updatedOrder = await Order.findById(order._id)
-      .populate('customer', 'name email phone')
-      .populate('user', 'name email')
-      .populate('items.product', 'name price category');
+    const updatedOrder = await fetchOrderById(id);
 
     return res.status(200).json({
       success: true,
       message: 'Order updated successfully',
       data: updatedOrder,
     });
-
   } catch (error) {
+    if (error instanceof HttpError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
     console.error('updateOrder error:', error);
 
     return res.status(500).json({
@@ -620,14 +497,12 @@ const updateOrder = async (req, res) => {
   }
 };
 
-
 // ==========================================
-// 7. DELETE ORDER
+// 5. DELETE ORDER
 // ==========================================
-
 const deleteOrder = async (req, res) => {
   try {
-    // Only admin can delete orders
+    // Only admin can delete orders.
     if (req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
@@ -637,46 +512,50 @@ const deleteOrder = async (req, res) => {
 
     const { id } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (!isUuid(id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid order ID',
       });
     }
 
-    const order = await Order.findById(id);
+    await withTransaction(async (client) => {
+      const orderResult = await client.query(
+        'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+      const order = orderResult.rows[0];
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found',
-      });
-    }
+      if (!order) {
+        throw new HttpError(404, 'Order not found');
+      }
 
-    // Restore stock if order was not already cancelled
-    if (order.status !== 'cancelled') {
-      const Product = getProductModel();
-
-      for (const item of order.items) {
-        await Product.updateOne(
-          { _id: item.product },
-          {
-            $inc: {
-              stock: item.quantity,
-            },
-          }
+      // Restore stock if the order was not already cancelled.
+      if (order.status !== 'cancelled') {
+        await client.query(
+          `UPDATE products p
+           SET stock = p.stock + oi.quantity
+           FROM order_items oi
+           WHERE oi.order_id = $1 AND p.id = oi.product_id`,
+          [id]
         );
       }
-    }
 
-    await Order.deleteOne({ _id: id });
+      await client.query('DELETE FROM orders WHERE id = $1', [id]);
+    });
 
     return res.status(200).json({
       success: true,
       message: 'Order deleted successfully',
     });
-
   } catch (error) {
+    if (error instanceof HttpError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
     console.error('deleteOrder error:', error);
 
     return res.status(500).json({
@@ -686,16 +565,10 @@ const deleteOrder = async (req, res) => {
   }
 };
 
-
-// ==========================================
-// 8. EXPORT CONTROLLERS
-// ==========================================
-
 module.exports = {
   getOrders,
   getOrder,
   createOrder,
   updateOrder,
   deleteOrder,
-  Order,
 };

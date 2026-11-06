@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const validator = require('validator');
 const jwt = require('jsonwebtoken');
 const { query, withTransaction } = require('../config/db');
 const { mapUser, mapCustomer } = require('../utils/mappers');
@@ -8,7 +9,7 @@ const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 // ── Helper: generate JWT ────────────────────────────────────────────────────
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '15m' });
 };
 
 const userResponse = (user, token) => {
@@ -59,10 +60,37 @@ const register = async (req, res) => {
       });
     }
 
-    if (String(password).length < 6) {
+    if (typeof password !== 'string') {
       return res.status(400).json({
         success: false,
-        message: 'Password must be at least 6 characters long',
+        message: 'Password must be a string',
+      });
+    }
+
+    if (password.length < 12) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 12 characters long',
+      });
+    }
+
+    if (Buffer.byteLength(password, 'utf8') > 72) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password cannot exceed 72 UTF-8 bytes',
+      });
+    }
+
+    if (!validator.isStrongPassword(password, {
+      minLength: 12,
+      minLowercase: 1,
+      minUppercase: 1,
+      minNumbers: 1,
+      minSymbols: 1,
+    })) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must contain uppercase, lowercase, number and special character',
       });
     }
 

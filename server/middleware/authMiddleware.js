@@ -62,5 +62,22 @@ const protect = async (req, res, next) => {
     });
   }
 };
+const authorize = (...allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin permission required.'
+      });
+    }
 
-module.exports = { protect };
+    next();
+  };
+};
+
+module.exports = {
+  protect,
+  authorize
+};
+
+

@@ -109,7 +109,7 @@ const seed = async () => {
       );
 
       // Admin user
-      const hashedPassword = await bcrypt.hash('admin123', 10);
+      const hashedPassword = await bcrypt.hash('admin@123!', 10);
       const adminResult = await client.query(
         `INSERT INTO users (name, email, password, role)
          VALUES ($1, $2, $3, 'admin')
@@ -198,7 +198,7 @@ const seed = async () => {
     process.exit(0);
   } catch (error) {
     console.error('Seed error:', error);
-    await closePool().catch(() => {});
+    await closePool().catch(() => { });
     process.exit(1);
   }
 };

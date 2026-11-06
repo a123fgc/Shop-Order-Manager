@@ -151,7 +151,7 @@ const getOrders = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: error.message || 'Failed to fetch orders',
+      message: error.message || 'Failed to fetch orders Please try again later.',
     });
   }
 };
@@ -198,9 +198,10 @@ const getOrder = async (req, res) => {
   } catch (error) {
     console.error('getOrder error:', error);
 
+
     return res.status(500).json({
       success: false,
-      message: error.message || 'Failed to fetch order',
+      message: 'Failed to fetch order. Please try again later.',
     });
   }
 };
@@ -363,7 +364,7 @@ const createOrder = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: error.message || 'Server error',
+      message: error.message || 'Something went wrong. Please try again later',
     });
   }
 };
@@ -492,7 +493,7 @@ const updateOrder = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: error.message || 'Failed to update order',
+      message: error.message || 'Failed to update order. Please try again later.',
     });
   }
 };

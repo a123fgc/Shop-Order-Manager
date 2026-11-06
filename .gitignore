@@ -1,7 +1,8 @@
 # Dependencies
 node_modules/
 **/node_modules/
-
+**/mongo-export.json
+**/supabase-setup.sql
 # Environment files
 .env
 

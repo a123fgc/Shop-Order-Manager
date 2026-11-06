@@ -1,12 +1,14 @@
-
 require('dotenv').config();
-
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { connectDB } = require('./config/db');
+// app.use(cookieParser());
 
 const app = express();
+// Trust one configured proxy hop
+app.set('trust proxy', 1);
 
 // Allowed frontend origins
 const allowedOrigins = [
@@ -30,34 +32,41 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow known frontend URLs and Vercel preview deployments
-      const isVercelPreview =
-        /^https:\/\/shop-order-manager-[a-z0-9-]+-asad-developer\.vercel\.app$/.test(
-          origin || ''
-        );
-
-      if (
-        !origin ||
-        allowedOrigins.includes(origin) ||
-        isVercelPreview
-      ) {
+      // Allow requests without an Origin header (e.g. server-to-server)
+      if (!origin) {
         return callback(null, true);
       }
 
-      return callback(new Error(`CORS blocked origin: ${origin}`));
+      // Allow only explicitly trusted origins
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // Reject untrusted origins without throwing a server error
+      return callback(null, false);
     },
+
     credentials: true,
+
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+
     allowedHeaders: ['Content-Type', 'Authorization'],
+
     optionsSuccessStatus: 204,
   })
 );
-
 // Parse incoming JSON requests
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '100kb' }));
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
+
+// app.use(express.json());
+app.use(cookieParser());
 
 // Parse URL-encoded requests
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ limit: '100kb', extended: true }));
 
 // Parse cookies
 app.use(cookieParser());
@@ -69,6 +78,18 @@ app.get('/', (req, res) => {
     message: 'Shop Order Manager API is running',
   });
 });
+// Login rate limiting
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: {
+    success: false,
+    message: 'Too many login attempts. Please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use('/auth/login', loginLimiter);
 
 // Database initialization middleware
 // Wait for PostgreSQL before processing API requests
@@ -137,7 +158,6 @@ if (require.main === module) {
 if (process.env.NODE_ENV !== 'production') {
   app.listen(3000, () => console.log('Running on 3000'))
 }
-
 module.exports = app  // ← yeh line add karo
 
 // Vercel serverless export

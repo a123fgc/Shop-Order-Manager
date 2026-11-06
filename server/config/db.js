@@ -11,28 +11,49 @@ const SCHEMA_PATH = path.join(__dirname, '..', 'db', 'schema.sql');
 let pool = null;
 let initPromise = null;
 
-function resolveSsl(connectionString) {
-  if (process.env.PGSSL === 'true') {
-    return { rejectUnauthorized: false };
-  }
 
+
+
+
+function resolveSsl(connectionString) {
   if (process.env.PGSSL === 'false') {
     return false;
   }
-  if ((connectionString || '').includes('supabase.com')) {
-    return { rejectUnauthorized: false };
+
+  const caPath = path.join(
+    __dirname,
+    '../certificates/supabase-ca.crt'
+  );
+
+  if (process.env.PGSSL === 'true') {
+    if (!fs.existsSync(caPath)) {
+      throw new Error('Database CA certificate not found');
+    }
+
+    return {
+      rejectUnauthorized: true,
+      ca: fs.readFileSync(caPath, 'utf8'),
+    };
   }
-  return /sslmode=require/i.test(connectionString || '')
-    ? { rejectUnauthorized: false }
-    : false;
 
+  if (
+    /supabase\.com/i.test(connectionString || '') ||
+    /sslmode=require/i.test(connectionString || '')
+  ) {
+    if (!fs.existsSync(caPath)) {
+      throw new Error('Database CA certificate not found');
+    }
 
-  // Most hosted providers (Supabase, Render, Railway...) require SSL and
-  // advertise it in the URL. Local PostgreSQL normally does not.
-  return /sslmode=require/i.test(connectionString || '')
-    ? { rejectUnauthorized: false }
-    : false;
+    return {
+      rejectUnauthorized: true,
+      ca: fs.readFileSync(caPath, 'utf8'),
+    };
+  }
+
+  return false;
 }
+
+
 
 function createPool() {
   let connectionString = process.env.DATABASE_URL;

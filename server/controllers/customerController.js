@@ -139,8 +139,8 @@ const updateCustomer = async (req, res) => {
       email: 'email',
       phone: 'phone',
       address: 'address',
-      user: 'user_id',
-      user_id: 'user_id',
+      // user: 'user_id',
+      // user_id: 'user_id',
     };
 
     const updates = [];

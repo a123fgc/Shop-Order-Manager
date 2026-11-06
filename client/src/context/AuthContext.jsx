@@ -55,19 +55,27 @@ export function AuthProvider({ children }) {
   }, [token]);
 
   const login = useCallback(async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
+    const { data } = await api.post('/auth/login', {
+      email,
+      password,
+    });
+
     const t = data.token || data.data?.token;
-    const u = data.user || data.data?.user || (data.data?.name ? data.data : data);
-    console.log('Logged-in user:', u);
-    console.log('User role:', u?.role);
-    if (!t) {
-      throw new Error('Authentication response did not contain a valid token');
+    const u = data.user || data.data?.user ||
+      (data.data?.name ? data.data : null);
+
+    if (!t || !u) {
+      throw new Error('Invalid authentication response');
     }
 
+    // Save token and user in localStorage
     localStorage.setItem('token', t);
     localStorage.setItem('user', JSON.stringify(u));
+
+    // Update React state
     setToken(t);
     setUser(u);
+
     return u;
   }, []);
 

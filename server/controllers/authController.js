@@ -34,13 +34,21 @@ const register = async (req, res) => {
   try {
     const name =
       typeof req.body.name === 'string' ? req.body.name.trim() : '';
+
     const email = normalizeEmail(req.body.email);
     const { password } = req.body;
 
-    if (!name || !email || !password) {
+    const phone =
+      typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
+
+    const address =
+      typeof req.body.address === 'string' ? req.body.address.trim() : '';
+
+    // Validate all required fields
+    if (!name || !email || !password || !phone || !address) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide name, email and password',
+        message: 'Please provide name, email, password, phone and address',
       });
     }
 
@@ -58,9 +66,10 @@ const register = async (req, res) => {
       });
     }
 
-    const existing = await query('SELECT id FROM users WHERE email = $1', [
-      email,
-    ]);
+    const existing = await query(
+      'SELECT id FROM users WHERE email = $1',
+      [email]
+    );
 
     if (existing.rowCount > 0) {
       return res.status(400).json({
@@ -71,6 +80,7 @@ const register = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(String(password), 10);
 
+    // Create user and customer profile in one transaction
     const { user, customer } = await withTransaction(async (client) => {
       const userResult = await client.query(
         `INSERT INTO users (name, email, password, role)
@@ -81,26 +91,39 @@ const register = async (req, res) => {
 
       const createdUser = userResult.rows[0];
 
-      // Automatically create a customer profile for this user
       const customerResult = await client.query(
-        `INSERT INTO customers (user_id, name, email)
-         VALUES ($1, $2, $3)
+        `INSERT INTO customers
+          (user_id, name, email, phone, address)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
-        [createdUser.id, createdUser.name, createdUser.email]
+        [
+          createdUser.id,
+          createdUser.name,
+          createdUser.email,
+          phone,
+          address,
+        ]
       );
 
-      return { user: createdUser, customer: customerResult.rows[0] };
+      return {
+        user: createdUser,
+        customer: customerResult.rows[0],
+      };
     });
 
     const token = generateToken(user.id);
     const response = userResponse(user, token);
 
-    res.status(201).json({
+    return res.status(201).json({
       ...response,
       customer: mapCustomer(customer),
     });
+
   } catch (error) {
-    console.error('Register error:', error.message);
+    console.error('Register error:', {
+      message: error.message,
+      code: error.code,
+    });
 
     if (error.code === '23505') {
       return res.status(400).json({
@@ -109,13 +132,12 @@ const register = async (req, res) => {
       });
     }
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: 'Registration failed due to a server error',
     });
   }
 };
-
 // @desc    Login user & get token
 // @route   POST /api/auth/login
 // @access  Public

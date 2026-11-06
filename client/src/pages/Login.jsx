@@ -1,3 +1,4 @@
+
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -8,8 +9,11 @@ export default function Login() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
   const { login, register } = useAuth();
   const navigate = useNavigate();
 
@@ -17,18 +21,20 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
+
     try {
       if (isRegister) {
-        await register(name, email, password);
+        await register(name, email, password, phone, address);
       } else {
         await login(email, password);
       }
+
       navigate('/', { replace: true });
     } catch (err) {
       setError(
         err.response?.data?.message ||
-          err.response?.data?.error ||
-          'Something went wrong. Please try again.'
+        err.response?.data?.error ||
+        'Something went wrong. Please try again.'
       );
     } finally {
       setLoading(false);
@@ -38,19 +44,28 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
+
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-200 mb-4">
             <Store className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Shop Order Manager</h1>
+
+          <h1 className="text-2xl font-bold text-gray-900">
+            Shop Order Manager
+          </h1>
+
           <p className="text-gray-500 mt-1">
-            {isRegister ? 'Create your account' : 'Sign in to your account'}
+            {isRegister
+              ? 'Create your account'
+              : 'Sign in to your account'}
           </p>
         </div>
 
         {/* Card */}
         <div className="bg-white rounded-2xl shadow-xl shadow-gray-200/50 border border-gray-100 p-8">
+
+          {/* Error Message */}
           {error && (
             <div className="mb-6 flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-lg text-sm">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -59,11 +74,14 @@ export default function Login() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-5">
+
+            {/* Full Name */}
             {isRegister && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
                   Full Name
                 </label>
+
                 <input
                   type="text"
                   value={name}
@@ -75,10 +93,12 @@ export default function Login() {
               </div>
             )}
 
+            {/* Email */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Email Address
               </label>
+
               <input
                 type="email"
                 value={email}
@@ -89,10 +109,12 @@ export default function Login() {
               />
             </div>
 
+            {/* Password */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Password
               </label>
+
               <input
                 type="password"
                 value={password}
@@ -104,18 +126,58 @@ export default function Login() {
               />
             </div>
 
+            {/* Phone and Address - Register Only */}
+            {isRegister && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Phone Number
+                  </label>
+
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="input-field"
+                    placeholder="03XXXXXXXXX"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Address
+                  </label>
+
+                  <textarea
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    className="input-field min-h-[90px] resize-y"
+                    placeholder="Enter your complete address"
+                    required
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
               className="w-full btn-primary py-2.5 flex items-center justify-center gap-2"
             >
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+              {loading && (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              )}
+
               {isRegister ? 'Create Account' : 'Sign In'}
             </button>
           </form>
 
+          {/* Login / Register Toggle */}
           <div className="mt-6 text-center">
             <button
+              type="button"
               onClick={() => {
                 setIsRegister(!isRegister);
                 setError('');
@@ -127,6 +189,7 @@ export default function Login() {
                 : "Don't have an account? Register"}
             </button>
           </div>
+
         </div>
       </div>
     </div>

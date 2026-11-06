@@ -130,6 +130,12 @@ if (require.main === module) {
       process.exit(1);
     });
 }
+// app.listen() hata do ya conditional karo:
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(3000, () => console.log('Running on 3000'))
+}
+
+module.exports = app  // ← yeh line add karo
 
 // Vercel serverless export
-module.exports = app;
+// module.exports = app;

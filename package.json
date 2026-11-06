@@ -2,7 +2,7 @@
   "scripts": {
     "build": "npm run build --prefix client",
     "vercel-build": "npm run build --prefix client",
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",

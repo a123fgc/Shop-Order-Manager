@@ -19,64 +19,38 @@ function resolveSsl(connectionString) {
   if (process.env.PGSSL === 'false') {
     return false;
   }
+  if ((connectionString || '').includes('supabase.com')) {
+    return { rejectUnauthorized: false };
+  }
+  return /sslmode=require/i.test(connectionString || '')
+    ? { rejectUnauthorized: false }
+    : false;
+
 
   // Most hosted providers (Supabase, Render, Railway...) require SSL and
   // advertise it in the URL. Local PostgreSQL normally does not.
-  const match = /[?&]sslmode=([^&]+)/i.exec(connectionString || '');
-  const mode = match ? decodeURIComponent(match[1]).toLowerCase() : '';
-
-  if (!mode || mode === 'disable') {
-    return false;
-  }
-
-  if (mode === 'verify-full' || mode === 'verify-ca') {
-    return { rejectUnauthorized: true };
-  }
-
-  // require / prefer / allow
-  return { rejectUnauthorized: false };
-}
-
-/**
- * Remove `sslmode` from the URI before handing it to `pg`.
- *
- * Recent versions of pg-connection-string treat `?sslmode=require` as
- * `verify-full`, and that parsed value replaces the explicit `ssl` option we
- * pass to the Pool. Resolving SSL ourselves (resolveSsl) keeps the behaviour
- * consistent across pg versions and avoids self-signed-chain failures behind
- * proxies/antivirus. For strict verification use PGSSL unset +
- * `?sslmode=verify-full`.
- */
-function normalizeConnectionString(connectionString) {
-  if (!connectionString) return connectionString;
-
-  const trimmed = connectionString.trim();
-
-  if (!/^postgres(ql)?:\/\//i.test(trimmed)) {
-    return trimmed;
-  }
-
-  try {
-    const url = new URL(trimmed);
-    url.searchParams.delete('sslmode');
-    url.searchParams.delete('uselibpqcompat');
-    return url.toString();
-  } catch {
-    return trimmed;
-  }
+  return /sslmode=require/i.test(connectionString || '')
+    ? { rejectUnauthorized: false }
+    : false;
 }
 
 function createPool() {
-  const connectionString = process.env.DATABASE_URL;
-
+  let connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error(
       'DATABASE_URL is not configured. Add it to server/.env or the environment.'
     );
   }
 
+  // pg parses `sslmode=require` from the connection string into `ssl: {}`,
+  // and `Object.assign` lets that override our explicit `ssl` config
+  // (e.g. { rejectUnauthorized: false }). Strip it so our ssl config wins.
+  connectionString = connectionString.replace(/[?&]sslmode=[^&]*/, '');
+
+
+
   const newPool = new Pool({
-    connectionString: normalizeConnectionString(connectionString),
+    connectionString,
     max: Number(process.env.PG_POOL_MAX) || 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis:
@@ -160,8 +134,8 @@ async function initDB() {
     if (error.code === '42804') {
       const wrapped = new Error(
         'The database contains tables with incompatible column types, so a ' +
-          'foreign key cannot be created. On a fresh/development database run ' +
-          '`npm run db:reset -- --yes` and then `npm run db:init`.'
+        'foreign key cannot be created. On a fresh/development database run ' +
+        '`npm run db:reset -- --yes` and then `npm run db:init`.'
       );
       wrapped.code = error.code;
       wrapped.cause = error;
@@ -197,12 +171,12 @@ function connectDB() {
 
         const wrapped = new Error(
           `Cannot connect to PostgreSQL at ${target}. ` +
-            (isLocal
-              ? 'DATABASE_URL in server/.env still points to a local database, but no local PostgreSQL is running. ' +
-                'Replace it with your Supabase connection string ' +
-                '(Dashboard -> Connect -> Session pooler, ending in ?sslmode=require).'
-              : 'Check that the database is running, that the host/port are correct, ' +
-                'and that your provider allows connections from this network.')
+          (isLocal
+            ? 'DATABASE_URL in server/.env still points to a local database, but no local PostgreSQL is running. ' +
+            'Replace it with your Supabase connection string ' +
+            '(Dashboard -> Connect -> Session pooler, ending in ?sslmode=require).'
+            : 'Check that the database is running, that the host/port are correct, ' +
+            'and that your provider allows connections from this network.')
         );
         wrapped.code = 'ECONNREFUSED';
         wrapped.cause = error;
@@ -214,8 +188,8 @@ function connectDB() {
           `Password authentication failed for PostgreSQL at ${describeConnection(
             process.env.DATABASE_URL
           )}. ` +
-            'Check the username/password in DATABASE_URL. Special characters in ' +
-            'the password must be URL-encoded (for example @ becomes %40).'
+          'Check the username/password in DATABASE_URL. Special characters in ' +
+          'the password must be URL-encoded (for example @ becomes %40).'
         );
         wrapped.code = error.code;
         wrapped.cause = error;
@@ -227,7 +201,7 @@ function connectDB() {
           `PostgreSQL host not found: ${describeConnection(
             process.env.DATABASE_URL
           )}. ` +
-            'Check the pooler region in DATABASE_URL, then run `npm run db:check`.'
+          'Check the pooler region in DATABASE_URL, then run `npm run db:check`.'
         );
         wrapped.code = error.code;
         wrapped.cause = error;

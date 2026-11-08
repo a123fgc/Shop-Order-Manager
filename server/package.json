@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "build": "echo 'No build step required for server'",
     "db:init": "node seeds/init-db.js",
     "db:reset": "node seeds/reset-db.js",
     "db:check": "node seeds/check-db.js",
